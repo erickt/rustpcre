@@ -23,102 +23,101 @@ import result::{result, ok, err, extensions};
 
 export pcre, match;
 
-iface match {
-    fn substring(index: uint) -> @str;
-    fn substrings() -> @[@str];
-    fn named(name: str) -> @str;
-}
-
-iface pcre {
-    fn match(target: str) -> option<match>;
-}
-
-type _pcre = *c_void;
-type _pcre_extra = *c_void;
+type pcre_t = *c_void;
+type pcre_extra_t = *c_void;
 
 #[link_name = "pcre"]
 native mod _native {
     fn pcre_compile(pattern: *c_char, options: c_int, errptr: **c_char,
-                    erroffset: *c_int, tableptr: *u8) -> *_pcre;
-    fn pcre_exec(re: *_pcre, extra: *_pcre_extra, subject: *c_char,
+                    erroffset: *c_int, tableptr: *u8) -> *pcre_t;
+    fn pcre_exec(re: *pcre_t, extra: *pcre_extra_t, subject: *c_char,
                  length: c_int, startoffset: c_int, options: c_int,
                  ovector: *c_int, ovecsize: c_int) -> c_int;
-    fn pcre_get_stringnumber(re: *_pcre, name: *u8) -> c_int;
-    fn pcre_refcount(re: *_pcre, adj: c_int) -> c_int;
+    fn pcre_get_stringnumber(re: *pcre_t, name: *u8) -> c_int;
+    fn pcre_refcount(re: *pcre_t, adj: c_int) -> c_int;
 }
 
-resource _pcre_res(re: *_pcre) {
-    _native::pcre_refcount(re, -1 as c_int);
-}
-
-fn mk_match(m: @[@str], re: *_pcre) -> match {
-    type matchstate = {
-        m: @[@str],
-        re: *_pcre
-    };
-
-    impl of match for matchstate {
-        fn substring(index: uint) -> @str {
-            self.m[index]
-        }
-        fn substrings() -> @[@str] {
-            self.m
-        }
-        fn named(name: str) -> @str unsafe {
-            let idx = str::as_buf(name){ |name|
-                _native::pcre_get_stringnumber(self.re, name) as uint
-            };
-            self.m[idx - 1]
-        }
-    }
-    ret { m : m, re: re } as match;
-}
-
-fn pcre(re: str) -> result<pcre, @str> unsafe {
-    type pcrestate = {
-        _re: *_pcre,
-        _res: _pcre_res
-    };
-
-    impl of pcre for pcrestate {
-        fn match(target: str) -> option<match> unsafe {
-            let oveclen = 30;
-            let ovec = vec::to_mut(vec::from_elem(oveclen as uint, 0i32));
-            let ovecp = vec::unsafe::to_ptr(ovec);
-            let re = self._re;
-            let r = str::as_c_str(target, { |_target|
-                _native::pcre_exec(re, ptr::null(),
-                                   _target, str::len(target) as c_int,
-                                   0 as c_int, 0 as c_int, ovecp,
-                                   oveclen as c_int)
-            });
-            if r < 0i32 {
-                ret none;
-            }
-            let mut idx = 2;    // skip the whole-string match at the start
-            let mut res = dvec();
-            while idx < oveclen * 2 / 3 {
-                let start = ovec[idx];
-                let end = ovec[idx + 1];
-                idx = idx + 2;
-                if start != end && start >= 0i32 && end >= 0i32 {
-                    res.push(@target.slice(start as uint, end as uint));
-                }
-            }
-            some(mk_match(@vec::from_mut(dvec::unwrap(res)), re))
-        }
+class pcre_ {
+    priv {
+        let re: *pcre_t;
     }
 
+    new(re: *pcre_t) {
+        self.re = re;
+    }
+
+    drop {
+        _native::pcre_refcount(self.re, -1 as c_int);
+    }
+
+    fn match(target: str) -> option<match> unsafe {
+        let oveclen = 30;
+        let ovec = vec::to_mut(vec::from_elem(oveclen as uint, 0i32));
+        let ovecp = vec::unsafe::to_ptr(ovec);
+
+        let r = str::as_c_str(target) { |_target|
+            _native::pcre_exec(self.re, ptr::null(),
+                               _target, str::len(target) as c_int,
+                               0 as c_int, 0 as c_int, ovecp,
+                               oveclen as c_int)
+        };
+
+        if r < 0i32 {
+            ret none;
+        }
+        let mut idx = 2;    // skip the whole-string match at the start
+        let mut res = dvec();
+        while idx < oveclen * 2 / 3 {
+            let start = ovec[idx];
+            let end = ovec[idx + 1];
+            idx = idx + 2;
+            if start != end && start >= 0i32 && end >= 0i32 {
+                res.push(@target.slice(start as uint, end as uint));
+            }
+        }
+
+        some(match(@vec::from_mut(dvec::unwrap(res)), self.re))
+    }
+}
+
+type pcre = pcre_;
+
+fn pcre(pattern: str) -> result<pcre, @str> unsafe {
     let errv = ptr::null();
     let erroff = 0 as c_int;
-    let r = str::as_c_str(re, { |_re|
-        _native::pcre_compile(_re, 0 as c_int, ptr::addr_of(errv),
+    let re = str::as_c_str(pattern) { |pattern|
+        _native::pcre_compile(pattern, 0 as c_int, ptr::addr_of(errv),
                               ptr::addr_of(erroff), ptr::null())
-    });
-    if r == ptr::null() {
+    };
+
+    if re == ptr::null() {
         err(@str::unsafe::from_c_str(errv))
     } else {
-        ok({ _re: r, _res: _pcre_res(r) } as pcre)
+        ok(pcre_(re))
+    }
+}
+
+class match {
+    priv {
+        let re: *pcre_t;
+    }
+
+    let substrings: @[@str];
+
+    new(substrings: @[@str], re: *pcre_t) {
+        self.substrings = substrings;
+        self.re = re;
+    }
+
+    fn [](index: uint) -> @str {
+        self.substrings[index]
+    }
+
+    fn named(name: str) -> @str unsafe {
+        let idx = str::as_buf(name){ |name|
+            _native::pcre_get_stringnumber(self.re, name) as uint
+        };
+        self.substrings[idx - 1]
     }
 }
 
@@ -126,20 +125,23 @@ fn pcre(re: str) -> result<pcre, @str> unsafe {
 mod tests {
     #[test]
     fn test_compile_fail() {
-        assert *pcre("(").get_err() == "missing )";
+        alt pcre("(") {
+          err(s) { assert *s == "missing )" }
+          ok(r) { fail }
+        }
     }
 
     #[test]
     fn test_match_basic() {
-        let r = pcre("...").get();
+        let r = result::unwrap(pcre("..."));
         let m = r.match("abc").get();
 
-        assert m.substrings().is_empty();
+        assert m.substrings.is_empty();
     }
 
     #[test]
     fn test_match_fail() {
-        let r = pcre("....").get();
+        let r = result::unwrap(pcre("...."));
         let m = r.match("ab");
 
         assert m.is_none();
@@ -147,16 +149,16 @@ mod tests {
 
     #[test]
     fn test_substring() {
-        let r = pcre("(.)bcd(e.g)").get();
+        let r = result::unwrap(pcre("(.)bcd(e.g)"));
         let m = r.match("abcdefg").get();
 
-        assert *m.substring(0u) == "a";
-        assert *m.substring(1u) == "efg";
+        assert *m[0u] == "a";
+        assert *m[1u] == "efg";
     }
 
     #[test]
     fn test_named() {
-        let r = pcre("(?<foo>..).(?<bar>..)").get();
+        let r = result::unwrap(pcre("(?<foo>..).(?<bar>..)"));
         let m = r.match("abcde").get();
 
         assert *m.named("foo") == "ab";
