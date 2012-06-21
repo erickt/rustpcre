@@ -21,7 +21,7 @@ import libc::{c_int, c_void, c_char};
 import dvec::{dvec, extensions};
 import result::{result, ok, err, extensions};
 
-export pcre, mk_pcre, match;
+export pcre, match;
 
 iface match {
     fn substring(index: uint) -> @str;
@@ -74,7 +74,7 @@ fn mk_match(m: @[@str], re: *_pcre) -> match {
     ret { m : m, re: re } as match;
 }
 
-fn mk_pcre(re: str) -> result<pcre, @str> unsafe {
+fn pcre(re: str) -> result<pcre, @str> unsafe {
     type pcrestate = {
         _re: *_pcre,
         _res: _pcre_res
@@ -126,12 +126,12 @@ fn mk_pcre(re: str) -> result<pcre, @str> unsafe {
 mod tests {
     #[test]
     fn test_compile_fail() {
-        assert *mk_pcre("(").get_err() == "missing )";
+        assert *pcre("(").get_err() == "missing )";
     }
 
     #[test]
     fn test_match_basic() {
-        let r = mk_pcre("...").get();
+        let r = pcre("...").get();
         let m = r.match("abc").get();
 
         assert m.substrings().is_empty();
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn test_match_fail() {
-        let r = mk_pcre("....").get();
+        let r = pcre("....").get();
         let m = r.match("ab");
 
         assert m.is_none();
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn test_substring() {
-        let r = mk_pcre("(.)bcd(e.g)").get();
+        let r = pcre("(.)bcd(e.g)").get();
         let m = r.match("abcdefg").get();
 
         assert *m.substring(0u) == "a";
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_named() {
-        let r = mk_pcre("(?<foo>..).(?<bar>..)").get();
+        let r = pcre("(?<foo>..).(?<bar>..)").get();
         let m = r.match("abcde").get();
 
         assert *m.named("foo") == "ab";
