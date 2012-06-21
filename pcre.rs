@@ -19,6 +19,7 @@ use std;
 
 import libc::{c_int, c_void, c_char};
 import dvec::{dvec, extensions};
+import result::{result, ok, err, extensions};
 
 export pcre, mk_pcre, match;
 
@@ -73,7 +74,7 @@ fn mk_match(m: @[@str], re: *_pcre) -> match {
     ret { m : m, re: re } as match;
 }
 
-fn mk_pcre(re: str) -> pcre unsafe {
+fn mk_pcre(re: str) -> result<pcre, @str> unsafe {
     type pcrestate = {
         _re: *_pcre,
         _res: _pcre_res
@@ -115,16 +116,22 @@ fn mk_pcre(re: str) -> pcre unsafe {
                               ptr::addr_of(erroff), ptr::null())
     });
     if r == ptr::null() {
-        fail #fmt["pcre_compile() failed: %s", str::unsafe::from_c_str(errv)];
+        err(@str::unsafe::from_c_str(errv))
+    } else {
+        ok({ _re: r, _res: _pcre_res(r) } as pcre)
     }
-    ret { _re: r, _res: _pcre_res(r) } as pcre;
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
+    fn test_compile_fail() {
+        assert *mk_pcre("(").get_err() == "missing )";
+    }
+
+    #[test]
     fn test_match_basic() {
-        let r = mk_pcre("...");
+        let r = mk_pcre("...").get();
         let m = r.match("abc").get();
 
         assert m.substrings().is_empty();
@@ -132,7 +139,7 @@ mod tests {
 
     #[test]
     fn test_match_fail() {
-        let r = mk_pcre("....");
+        let r = mk_pcre("....").get();
         let m = r.match("ab");
 
         assert m.is_none();
@@ -140,7 +147,7 @@ mod tests {
 
     #[test]
     fn test_substring() {
-        let r = mk_pcre("(.)bcd(e.g)");
+        let r = mk_pcre("(.)bcd(e.g)").get();
         let m = r.match("abcdefg").get();
 
         assert *m.substring(0u) == "a";
@@ -149,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_named() {
-        let r = mk_pcre("(?<foo>..).(?<bar>..)");
+        let r = mk_pcre("(?<foo>..).(?<bar>..)").get();
         let m = r.match("abcde").get();
 
         assert *m.named("foo") == "ab";
