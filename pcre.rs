@@ -23,14 +23,13 @@ import dvec::{dvec, extensions};
 export pcre, mk_pcre, match;
 
 iface match {
-    fn matched() -> bool;
     fn substring(index: uint) -> @str;
     fn substrings() -> @[@str];
     fn named(name: str) -> @str;
 }
 
 iface pcre {
-    fn match(target: str) -> match;
+    fn match(target: str) -> option<match>;
 }
 
 type _pcre = *c_void;
@@ -51,25 +50,24 @@ resource _pcre_res(re: *_pcre) {
     _native::pcre_refcount(re, -1 as c_int);
 }
 
-fn mk_match(m: option<@[@str]>, re: *_pcre) -> match {
+fn mk_match(m: @[@str], re: *_pcre) -> match {
     type matchstate = {
-        m: option<@[@str]>,
+        m: @[@str],
         re: *_pcre
     };
 
     impl of match for matchstate {
-        fn matched() -> bool { option::is_some(self.m) }
         fn substring(index: uint) -> @str {
-            option::get(self.m)[index]
+            self.m[index]
         }
         fn substrings() -> @[@str] {
-            option::get(self.m)
+            self.m
         }
         fn named(name: str) -> @str unsafe {
-            let _re = self.re;
-            let idx = str::as_buf(name, { |_name|
-                _native::pcre_get_stringnumber(_re, _name) });
-            ret option::get(self.m)[idx - (1 as c_int)];
+            let idx = str::as_buf(name){ |name|
+                _native::pcre_get_stringnumber(self.re, name) as uint
+            };
+            self.m[idx - 1]
         }
     }
     ret { m : m, re: re } as match;
@@ -82,7 +80,7 @@ fn mk_pcre(re: str) -> pcre unsafe {
     };
 
     impl of pcre for pcrestate {
-        fn match(target: str) -> match unsafe {
+        fn match(target: str) -> option<match> unsafe {
             let oveclen = 30;
             let ovec = vec::to_mut(vec::from_elem(oveclen as uint, 0i32));
             let ovecp = vec::unsafe::to_ptr(ovec);
@@ -94,7 +92,7 @@ fn mk_pcre(re: str) -> pcre unsafe {
                                    oveclen as c_int)
             });
             if r < 0i32 {
-                ret mk_match(option::none, re);
+                ret none;
             }
             let mut idx = 2;    // skip the whole-string match at the start
             let mut res = dvec();
@@ -106,7 +104,7 @@ fn mk_pcre(re: str) -> pcre unsafe {
                     res.push(@target.slice(start as uint, end as uint));
                 }
             }
-            ret mk_match(option::some(@vec::from_mut(dvec::unwrap(res))), re);
+            some(mk_match(@vec::from_mut(dvec::unwrap(res)), re))
         }
     }
 
@@ -127,8 +125,8 @@ mod tests {
     #[test]
     fn test_match_basic() {
         let r = mk_pcre("...");
-        let m = r.match("abc");
-        assert(m.matched());
+        let m = r.match("abc").get();
+
         assert m.substrings().is_empty();
     }
 
@@ -136,14 +134,15 @@ mod tests {
     fn test_match_fail() {
         let r = mk_pcre("....");
         let m = r.match("ab");
-        assert(!m.matched());
+
+        assert m.is_none();
     }
 
     #[test]
     fn test_substring() {
         let r = mk_pcre("(.)bcd(e.g)");
-        let m = r.match("abcdefg");
-        assert(m.matched());
+        let m = r.match("abcdefg").get();
+
         assert *m.substring(0u) == "a";
         assert *m.substring(1u) == "efg";
     }
@@ -151,8 +150,8 @@ mod tests {
     #[test]
     fn test_named() {
         let r = mk_pcre("(?<foo>..).(?<bar>..)");
-        let m = r.match("abcde");
-        assert(m.matched());
+        let m = r.match("abcde").get();
+
         assert *m.named("foo") == "ab";
         assert *m.named("bar") == "de";
     }
