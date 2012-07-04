@@ -27,7 +27,7 @@ type pcre_t = *c_void;
 type pcre_extra_t = *c_void;
 
 #[link_name = "pcre"]
-native mod _native {
+extern mod libpcre {
     fn pcre_compile(pattern: *c_char, options: c_int, errptr: **c_char,
                     erroffset: *c_int, tableptr: *u8) -> *pcre_t;
     fn pcre_exec(re: *pcre_t, extra: *pcre_extra_t, subject: *c_char,
@@ -47,7 +47,7 @@ class pcre_ {
     }
 
     drop {
-        _native::pcre_refcount(self.re, -1 as c_int);
+        libpcre::pcre_refcount(self.re, -1 as c_int);
     }
 
     fn match(target: str) -> option<match> unsafe {
@@ -55,9 +55,9 @@ class pcre_ {
         let ovec = vec::to_mut(vec::from_elem(oveclen as uint, 0i32));
         let ovecp = vec::unsafe::to_ptr(ovec);
 
-        let r = str::as_c_str(target) { |_target|
-            _native::pcre_exec(self.re, ptr::null(),
-                               _target, str::len(target) as c_int,
+        let r = do str::as_c_str(target) |p| {
+            libpcre::pcre_exec(self.re, ptr::null(),
+                               p, target.len() as c_int,
                                0 as c_int, 0 as c_int, ovecp,
                                oveclen as c_int)
         };
@@ -85,8 +85,8 @@ type pcre = pcre_;
 fn pcre(pattern: str) -> result<pcre, @str> unsafe {
     let errv = ptr::null();
     let erroff = 0 as c_int;
-    let re = str::as_c_str(pattern) { |pattern|
-        _native::pcre_compile(pattern, 0 as c_int, ptr::addr_of(errv),
+    let re = do str::as_c_str(pattern) |pattern| {
+        libpcre::pcre_compile(pattern, 0 as c_int, ptr::addr_of(errv),
                               ptr::addr_of(erroff), ptr::null())
     };
 
@@ -102,9 +102,9 @@ class match {
         let re: *pcre_t;
     }
 
-    let substrings: @[@str];
+    let substrings: @~[@str];
 
-    new(substrings: @[@str], re: *pcre_t) {
+    new(substrings: @~[@str], re: *pcre_t) {
         self.substrings = substrings;
         self.re = re;
     }
@@ -114,8 +114,8 @@ class match {
     }
 
     fn named(name: str) -> @str unsafe {
-        let idx = str::as_buf(name){ |name|
-            _native::pcre_get_stringnumber(self.re, name) as uint
+        let idx = do str::as_buf(name) |name| {
+            libpcre::pcre_get_stringnumber(self.re, name) as uint
         };
         self.substrings[idx - 1]
     }
