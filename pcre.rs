@@ -97,6 +97,9 @@ pub impl Pcre {
             }
         }
 
+        // Make sure we let pcre know that we're sharing the pcre_t pointer.
+        libpcre::pcre_refcount(self.re, 1 as c_int);
+
         Some(Match {
             substrings: substrings,
             re: self.re
@@ -107,6 +110,10 @@ pub impl Pcre {
 pub struct Match {
     priv re: *pcre_t,
     substrings: ~[@~str],
+
+    drop {
+        libpcre::pcre_refcount(self.re, -1 as c_int);
+    }
 }
 
 pub impl Match {
