@@ -44,7 +44,7 @@ pub struct Pcre {
     }
 }
 
-fn Pcre(pattern: &str) -> Result<Pcre, ~str> unsafe {
+pub fn Pcre(pattern: &str) -> Result<Pcre, ~str> unsafe {
     do str::as_c_str(pattern) |pattern| {
         let errv = ptr::null();
         let erroff = 0 as c_int;
